@@ -131,7 +131,7 @@ for(j in 1:nrow(google_heti)){
     google$heti[i] = google_heti$hits[j]
     print(google[i,])
     i = i + 1
-    if(i == nrow(google)){
+    if(i > nrow(google)){
       break
     }
   }
