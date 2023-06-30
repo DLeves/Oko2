@@ -16,7 +16,7 @@ library(aod) #granger
 # Adatok összegyűjtése
 #********************************************************************************************
 
-
+# Yahoo finance + Kinfo dummy adatok ---------------------------------------------------------------
 # Yahoo finance-rők az árfolyam lekérése 2021. jan 1-től 2022. dec 31-ig
 eurxts = getSymbols("EURHUF=X", src = "yahoo", from = "2020-01-01", to = "2023-05-12", auto.assign = F)
 usdxts = getSymbols("USDHUF=X", src = "yahoo", from = "2020-01-01", to = "2023-05-12", auto.assign = F)
@@ -25,7 +25,7 @@ usdxts = getSymbols("USDHUF=X", src = "yahoo", from = "2020-01-01", to = "2023-0
 kinfodummy = read.csv("Kormanyinfo.csv")
 
 #Google keresések száma
-google = read.csv("https://raw.githubusercontent.com/DLeves/Oko2/main/KormanyinfoGoogleTrend.csv")
+google = read.csv("KormanyinfoGoogleTrend.csv")
 
 # a Yahoo finance-es adatokből dataframe-ként az idő és az 'highest'(ezt közösen beszéljük meg melyik legyen)
 
@@ -37,7 +37,7 @@ arfolyam = data.frame(time = index(eurxts),
 rm(eurxts, usdxts)
 
 # EUR/HUF, USD/HUF alap vonaldiagramm, 'theme_minimal'-al
-kinfo = arfolyam %>% filter(kinfo == 1) # azért van ilyen data frame, hogy tudjam ábrázolni a kormányinfó pontokat
+kinfo = arfolyam %>% filter(kinfodummy == 1) # azért van ilyen data frame, hogy tudjam ábrázolni a kormányinfó pontokat
 
 ggplot()+
   geom_line(data = arfolyam, aes(x = time, y = eurhuf, color = "EUR/HUF árfolyam"))+
@@ -48,7 +48,7 @@ ggplot()+
 
 rm(kinfodummy)
 
-# végül ez nem kell----------------
+# google trends napi adatok------------------------------------------------------------------------
 # Google trends-ről 'korányinfó' keresési trend
 #   Itt egy olyan probléma lép fel, hogy max ~90 napos intervallumban vannak napi adatok, annál nagyobbakban már hetiek
 #   ezt úgy lehetne orvosolni, hogy sokszor kérek le 90 naposat.
@@ -93,9 +93,67 @@ arfolyam$gtrend = kinfo$trend
 ggplot(kinfo, aes(x = time))+
   geom_line(aes(y = trend, color = "kormányinfó keresési trend"))+
   theme_minimal()
-# --------------
 
+
+
+# google trends heti adatok--------------------------------------------------------------------------
+# Eddig voltak az adatok az öko csoportmunkában
+# A negyedéves adatokkal az a probléma ebben az esetben, hogy minden Q-ban van egy 100-as érték 
+# Ezt azzal lehetne kiküszöbölni, ha az egész időszakra néznénk az adatokat
+# Azzal meg az a baj, hogy heti gyakoriságúak
+# Meg lehetne csinálni, hogy a heti kereséseket alapul véve a napokkal súlyozok
+# Először azonban valahogy egy dataframe-be kellene helyezni őket
+
+google_napi = read.csv("KormanyinfoGoogleTrend.csv")
+google_napi$time = as.POSIXct(google_napi$time, tz = "GMT")
+
+google_heti = gtrends(keyword = "kormányinfó", time = "2019-12-29 2023-05-15")$interest_over_time
+
+# van itt egy darab '<1' érték, ezért character-ként van a dataframeben
+# ezt megelőlegezem egy 1-el, így már lehet integer-ként kezelni őket
+
+google_heti$hits = as.numeric(google_heti$hits)
+google_heti$hits[is.na(google_heti$hits)] = 1
+
+# Most, hogy ez megvan, el lehet kezdeni gondolkodni, hogy mégis hogyan lehetne összetenni a két df-et
+
+google = data.frame(
+  time = google_napi$time,
+  napi = google_napi$trend,
+  heti = 0
+)
+
+# Lehetne ennél szofisztikáltabban is, de egyenlőre működik
+
+i = 1
+for(j in 1:nrow(google_heti)){
+  while (google$time[i] >= google_heti$date[j] && google$time[i] < google_heti$date[j+1]) {
+    google$heti[i] = google_heti$hits[j]
+    print(google[i,])
+    i = i + 1
+    if(i == nrow(google)){
+      break
+    }
+  }
+}
+
+# Inkább lementem, hogy legközelebb csak be kelljen olvasni
+
+arfolyam$napi_google = google$napi
+arfolyam$heti_google = google$heti
+
+write.csv(arfolyam,"ArfolyamKinfo.csv", row.names = F)
+
+# Lényegében megvannak a napi és heti átlagok 
+# Már csak azt kellene kitalálni, hogy ezeket hogyan kombináljuk
+
+# ----------------------------------------------------------------------------------------------------
+# ezt esetleg bele lehetne tenni breakpointnak
 # https://telex.hu/gazdasag/2022/10/14/rendkivuli-bejelentest-tesz-az-mnb-csak-azt-nem-tudni-meg-hogy-mikor
+# ----------------------------------------------------------------------------------------------------
+
+arfolyam = read.csv("ArfolyamKinfo.csv")
+arfolyam$time = as.Date(arfolyam$time)
 
 #Box-Jenkins----
 #********************************************************************************************
@@ -140,53 +198,55 @@ pacf(arfolyam$d_usdhuf[-1]) # AR(1) (de kiugrik a 6. és a 25. lag is)
 # 6. lépés -------------------------
 coeftest(forecast::auto.arima(arfolyam$eurhuf))
 coeftest(forecast::auto.arima(arfolyam$eurhuf, xreg = arfolyam$kinfodummy))
-coeftest(forecast::auto.arima(arfolyam$eurhuf, xreg = arfolyam$gtrend))
+coeftest(forecast::auto.arima(arfolyam$eurhuf, xreg = arfolyam$napi_google))
 eur = forecast::auto.arima(arfolyam$eurhuf, xreg = arfolyam$kinfodummy)
 
 coeftest(forecast::auto.arima(arfolyam$usdhuf))
 coeftest(forecast::auto.arima(arfolyam$usdhuf, xreg = arfolyam$kinfodummy))
-coeftest(forecast::auto.arima(arfolyam$usdhuf, xreg = arfolyam$gtrend))
-usd = forecast::auto.arima(arfolyam$usdhuf, xreg = arfolyam$gtrend)
+coeftest(forecast::auto.arima(arfolyam$usdhuf, xreg = arfolyam$napi_google))
+usd = forecast::auto.arima(arfolyam$usdhuf, xreg = arfolyam$napi_google)
 
 #----
 #********************************************************************************************
 # VAR/VACM modell
 #********************************************************************************************
 
-#információs kritériumok
-vars:: VARselect(arfolyam$[2:nrow(d_eurhuf), 
-                  c("d_eurhuf", "kinfo", "google")], 
-                  lag.max = 24)
-                  
-#Var modell                  
-var_modell <- VAR(arfolyam$[2:nrow(d_eurhuf),
-                  c("d_eurhuf", "kinfo", "google")],
-                  p = ?,
-                  type = "const")
-summary(var_modell)
+# Kikommenteltem ezeket a sorokat, mert valami hiba volt benne, de nem mertem belenyulni - Levi
 
-#granger
-coef(var_modell$varresult$d_eurhuf) #együtthatók
-coef(var_modell$varresult$d_eruhuf) #mik kerülnek a Grangerbe
-vcov(var_modell$varresult$d_eurhuf) #standardhiba négyzetek
-aod::wald.test(b=coef(var_modell$varresult$d_eurhuf),
-               Sigma=vcov(var_modell$varresult$d_eurhuf), 
-               Terms=c(?,?) )
+# #információs kritériumok
+# vars::VARselect(arfolyam$[2:nrow(d_eurhuf), 
+#                   c("d_eurhuf", "kinfo", "google")], 
+#                   lag.max = 24)
+#                   
+# #Var modell                  
+# var_modell <- VAR(arfolyam$[2:nrow(d_eurhuf),
+#                   c("d_eurhuf", "kinfo", "google")],
+#                   p = ?,
+#                   type = "const")
+# summary(var_modell)
 
-#együttes fehérzajság
-var_hibatagok <- as.data.frame(resid(var_modell))
-#egyenkénti fehérzajság
-lapply(var_hibatagok, function(i) bgtest(i ~ 1, order = ?))
-
-#egységgyökteszt
-if(abs(roots(var_modell))<1, "VAR modell stabil", "VAR modell instabil")
-
-#Impulzus-válaszfügvény
-plot(irf(var_modell,
-         impulse = "kinfo", 
-         response = "d_eurhuf", 
-         n.ahead = 20, 
-         ortho = TRUE))
+# #granger
+# coef(var_modell$varresult$d_eurhuf) #együtthatók
+# coef(var_modell$varresult$d_eruhuf) #mik kerülnek a Grangerbe
+# vcov(var_modell$varresult$d_eurhuf) #standardhiba négyzetek
+# aod::wald.test(b=coef(var_modell$varresult$d_eurhuf),
+#                Sigma=vcov(var_modell$varresult$d_eurhuf), 
+#                Terms=c(?,?) )
+# 
+# #együttes fehérzajság
+# var_hibatagok <- as.data.frame(resid(var_modell))
+# #egyenkénti fehérzajság
+# lapply(var_hibatagok, function(i) bgtest(i ~ 1, order = ?))
+# 
+# #egységgyökteszt
+# if(abs(roots(var_modell))<1, "VAR modell stabil", "VAR modell instabil")
+# 
+# #Impulzus-válaszfügvény
+# plot(irf(var_modell,
+#          impulse = "kinfo", 
+#          response = "d_eurhuf", 
+#          n.ahead = 20, 
+#          ortho = TRUE))
 
 
 
