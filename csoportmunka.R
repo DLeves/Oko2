@@ -8,11 +8,14 @@ library(tidyverse) #ggplot2 + más packegek, ha kellenének
 library(aTSA) # adf.test-hez
 library(lmtest) # bgtest, coeftest...
 library(vars) # var modellhez
+library(aod) #granger
+
 
 #Adatok----
 #********************************************************************************************
 # Adatok összegyűjtése
 #********************************************************************************************
+
 
 # Yahoo finance-rők az árfolyam lekérése 2021. jan 1-től 2022. dec 31-ig
 eurxts = getSymbols("EURHUF=X", src = "yahoo", from = "2020-01-01", to = "2023-05-12", auto.assign = F)
@@ -21,8 +24,16 @@ usdxts = getSymbols("USDHUF=X", src = "yahoo", from = "2020-01-01", to = "2023-0
 # Kormányinfó dátumok
 kinfodummy = read.csv("Kormanyinfo.csv")
 
+#Google keresések száma
+google = read.csv("https://raw.githubusercontent.com/DLeves/Oko2/main/KormanyinfoGoogleTrend.csv")
+
 # a Yahoo finance-es adatokből dataframe-ként az idő és az 'highest'(ezt közösen beszéljük meg melyik legyen)
-arfolyam = data.frame(time = index(eurxts), eurhuf = as.numeric(eurxts$`EURHUF=X.High`), usdhuf = as.numeric(usdxts$`USDHUF=X.High`), kinfodummy = kinfodummy$Kormanyinfo)
+
+
+arfolyam = data.frame(time = index(eurxts),
+                      eurhuf = as.numeric(eurxts$`EURHUF=X.High`),
+                      usdhuf = as.numeric(usdxts$`USDHUF=X.High`),
+                      kinfodummy = kinfodummy$Kormanyinfo)
 rm(eurxts, usdxts)
 
 # EUR/HUF, USD/HUF alap vonaldiagramm, 'theme_minimal'-al
@@ -141,6 +152,42 @@ usd = forecast::auto.arima(arfolyam$usdhuf, xreg = arfolyam$gtrend)
 #********************************************************************************************
 # VAR/VACM modell
 #********************************************************************************************
+
+#információs kritériumok
+vars:: VARselect(arfolyam$[2:nrow(d_eurhuf), 
+                  c("d_eurhuf", "kinfo", "google")], 
+                  lag.max = 24)
+                  
+#Var modell                  
+var_modell <- VAR(arfolyam$[2:nrow(d_eurhuf),
+                  c("d_eurhuf", "kinfo", "google")],
+                  p = ?,
+                  type = "const")
+summary(var_modell)
+
+#granger
+coef(var_modell$varresult$d_eurhuf) #együtthatók
+coef(var_modell$varresult$d_eruhuf) #mik kerülnek a Grangerbe
+vcov(var_modell$varresult$d_eurhuf) #standardhiba négyzetek
+aod::wald.test(b=coef(var_modell$varresult$d_eurhuf),
+               Sigma=vcov(var_modell$varresult$d_eurhuf), 
+               Terms=c(?,?) )
+
+#együttes fehérzajság
+var_hibatagok <- as.data.frame(resid(var_modell))
+#egyenkénti fehérzajság
+lapply(var_hibatagok, function(i) bgtest(i ~ 1, order = ?))
+
+#egységgyökteszt
+if(abs(roots(var_modell))<1, "VAR modell stabil", "VAR modell instabil")
+
+#Impulzus-válaszfügvény
+plot(irf(var_modell,
+         impulse = "kinfo", 
+         response = "d_eurhuf", 
+         n.ahead = 20, 
+         ortho = TRUE))
+
 
 
 
